@@ -5,65 +5,36 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
-)
-
-const (
-	schemeZoro  = "zoro"
-	schemeZoros = "zoros"
 )
 
 type Spec struct {
 	Search *Search `json:"search"`
 	List   *List   `json:"list"`
+	URL    *string `json:"url"`
 }
 
-func resolveURL(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
+func execURL(ctx context.Context, url string, l *Loader) (string, error) {
+	if *verbose {
+		log.Println("URL", url)
+	}
+
+	rc, err := l.Load(ctx, url)
 	if err != nil {
-		return "", fmt.Errorf("parse: %w", err)
+		return "", fmt.Errorf("load: %w", err)
 	}
+	defer rc.Close()
 
-	if u.Scheme == schemeZoro {
-		u.Scheme = "http"
-		return *zoroFlag + u.String(), nil
-	} else if u.Scheme == schemeZoros {
-		u.Scheme = "https"
-		return *zoroFlag + u.String(), nil
+	if rc.IsVideo() {
+		err := rc.PlayVideo(ctx)
+		return "", err
 	}
-
-	return rawURL, nil
-}
-
-func execURL(ctx context.Context, url string) (string, error) {
-	log.Printf("Resvoling url: %s\n", url)
-	url, err := resolveURL(url)
-	if err != nil {
-		return "", fmt.Errorf("resolve url: %w", err)
-	}
-
-	log.Printf("Resolved url: %s\n", url)
-
-	resp, err := http.Get(url)
-	if err != nil {
-		return "", fmt.Errorf("get: %w", err)
-	}
-	defer resp.Body.Close()
-
-	bts, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("body: read: %w", err)
-	}
-
-	log.Printf("Received from %s: %s\n", url, string(bts))
 
 	var spec Spec
 
-	if err := json.Unmarshal(bts, &spec); err != nil {
+	if err := json.Unmarshal(rc.Bytes, &spec); err != nil {
 		return "", fmt.Errorf("body: unmarshal: %w", err)
 	}
 
@@ -71,7 +42,7 @@ func execURL(ctx context.Context, url string) (string, error) {
 
 	switch {
 	case spec.Search != nil:
-		nextURL, err = spec.Search.Run(ctx)
+		nextURL, err = spec.Search.Run(ctx, l)
 		if err != nil {
 			return "", fmt.Errorf("search: %w", err)
 		}
@@ -80,59 +51,58 @@ func execURL(ctx context.Context, url string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("list: %w", err)
 		}
+	case spec.URL != nil:
+		return *spec.URL, nil
 	}
 
 	return nextURL, nil
 }
 
 var (
-	zoroFlag = flag.String("zoro", "http://localhost:8080/", "")
-	zoroURL  *url.URL
+	zoroURLFlag = flag.String("zoro-url", "http://zoro.fly.dev/", "")
+	spaceFlag   = flag.String("space", "zoro", `"zoro" or "local"`)
+	verbose     = flag.Bool("v", false, "print more details to stderr")
+	videoCmd    = flag.String("video-cmd", "vlc", "command to play video with")
+
+	zoroURL *url.URL
 )
 
 func main() {
-	urlFlag := flag.String("url", "", "")
 	flag.Parse()
 
-	if *urlFlag == "" || *zoroFlag == "" {
+	if len(flag.Args()) < 1 {
 		flag.Usage()
 		os.Exit(1)
 	}
 
 	var err error
-	zoroURL, err = url.Parse(*zoroFlag)
+	zoroURL, err = url.Parse(*zoroURLFlag)
 	if err != nil {
 		panic(err)
 	}
 
+	loader := &Loader{
+		ZoroURL: *zoroURLFlag,
+	}
+
+	switch *spaceFlag {
+	case "local":
+		loader.Space = SpaceLocal
+	case "zoro":
+		loader.Space = SpaceZoro
+	}
+
 	ctx := context.Background()
-	nextURL := *urlFlag
+	nextURL := flag.Arg(0)
 
 	for {
-		nextURL, err = execURL(ctx, nextURL)
+		nextURL, err = execURL(ctx, nextURL, loader)
 		if err != nil {
 			panic(err)
 		}
-
-		log.Println("DEBUG nextURL", nextURL)
 
 		if nextURL == "" {
 			break
 		}
 	}
-
-	// grid := tview.NewGrid().
-	// 	// SetRows(3, 0, 3).
-	// 	// SetColumns(30, 0, 30).
-	// 	SetBorders(true).
-	// 	AddItem(inputField, 0, 0, 1, 1, 0, 0, false).
-	// 	AddItem(list, 1, 0, 1, 1, 0, 0, true)
-
-	// if err := tview.NewApplication().SetRoot(grid, true).SetFocus(grid).Run(); err != nil {
-	// 	panic(err)
-	// }
-
-	// if err := app.SetRoot(inputField, true).SetFocus(inputField).Run(); err != nil {
-	// 	panic(err)
-	// }
 }

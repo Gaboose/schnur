@@ -48,5 +48,5 @@ func (l *List) Run(ctx context.Context) (string, error) {
 		panic(err)
 	}
 
-	return "", nil
+	return (*l)[list.GetCurrentItem()].URL, nil
 }

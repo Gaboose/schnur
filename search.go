@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"time"
 
@@ -41,7 +39,7 @@ type Search struct {
 	URL string `json:"url"`
 }
 
-func (s *Search) Run(ctx context.Context) (string, error) {
+func (s *Search) Run(ctx context.Context, loader *Loader) (string, error) {
 	app := tview.NewApplication()
 	var listSpec *List
 
@@ -87,35 +85,20 @@ func (s *Search) Run(ctx context.Context) (string, error) {
 
 	inputField.SetChangedFunc(func(text string) {
 		inputDebounce.do(ctx, func(ctx context.Context) {
-			u, err := resolveURL(s.URL)
-			if err != nil {
-				panic(err)
-			}
+			log.Println("DEBUG " + s.URL + url.PathEscape(text))
 
-			log.Println("DEBUG " + u + text)
-
-			req, err := http.NewRequestWithContext(ctx, "GET", u+url.PathEscape(text), nil)
-			if err != nil {
-				panic(err)
-			}
-
-			resp, err := http.DefaultClient.Do(req)
+			rc, err := loader.Load(ctx, s.URL+url.PathEscape(text))
 			if errors.Is(err, context.Canceled) {
 				log.Println("Debounce context canceled")
 				return
 			} else if err != nil {
 				panic(err)
 			}
-			defer resp.Body.Close()
-
-			bts, err := io.ReadAll(resp.Body)
-			if err != nil {
-				panic(err)
-			}
+			defer rc.Close()
 
 			spec := Spec{}
 
-			if err := json.Unmarshal(bts, &spec); err != nil {
+			if err := json.Unmarshal(rc.Bytes, &spec); err != nil {
 				panic(err)
 			}
 
