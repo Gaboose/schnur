@@ -27,13 +27,18 @@ type Loader struct {
 	ZoroURL string
 }
 
-func (l *Loader) Load(ctx context.Context, url string) (*Resource, error) {
-	rc, mime, err := l.readCloser(ctx, url)
+func (l *Loader) Load(ctx context.Context, rawURL string) (*Resource, error) {
+	rc, mime, err := l.readCloser(ctx, rawURL)
 	if err != nil {
 		return nil, err
 	}
 
-	_, fileName := path.Split(url)
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	_, fileName := path.Split(u.Path)
 
 	ret := &Resource{
 		ReadCloser: rc,
@@ -161,5 +166,14 @@ func (r *Resource) PlayVideo(ctx context.Context) error {
 	cmdParts = append(cmdParts, fname)
 
 	cmd := exec.CommandContext(ctx, cmdParts[0], cmdParts[1:]...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	go io.Copy(stdinPipe, os.Stdin)
 	return cmd.Run()
 }
